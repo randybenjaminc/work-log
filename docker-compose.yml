@@ -1,0 +1,103 @@
+services:
+
+  # ─── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret123
+      POSTGRES_DB: worklogdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d worklogdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── MongoDB ────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7-jammy
+    container_name: mongo
+    restart: unless-stopped
+    volumes:
+      - mongodata:/data/db
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Microservicio de logs ───────────────────────────────────────────────────
+  ms-logs:
+    build:
+      context: ./ms-logs
+    container_name: ms-logs
+    restart: unless-stopped
+    environment:
+      MONGO_URI: mongodb://mongo:27017/logsdb
+      LOG_MS_PORT: 4000
+    networks:
+      - backend
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  # ─── pgAdmin ─────────────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@pgadmin.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ─── API principal ───────────────────────────────────────────────────────────
+  api-main:
+    build:
+      context: ./api-main
+    container_name: api-main
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: admin
+      DB_PASS: secret123
+      DB_NAME: worklogdb
+      JWT_SECRET: supersecretjwtkey2024
+      JWT_EXPIRES: 7d
+      LOG_MS_HOST: ms-logs
+      LOG_MS_PORT: 4000
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ms-logs:
+        condition: service_started
+
+volumes:
+  pgdata:
+  mongodata:
+  pgadmin_data:
+
+networks:
+  backend:
+    driver: bridge
